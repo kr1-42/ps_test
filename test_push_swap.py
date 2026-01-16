@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 import random
+import re
+import shlex
 import subprocess
 import sys
 from typing import List, Tuple
@@ -50,6 +52,31 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="How many failing cases to print (default: 5)",
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored status output",
+    )
+    parser.add_argument(
+        "--valgrind",
+        action="store_true",
+        help="Wrap executions with valgrind and fail on leaks/errors",
+    )
+    parser.add_argument(
+        "--valgrind-opts",
+        default=(
+            "--leak-check=full "
+            "--show-leak-kinds=all "
+            "--errors-for-leak-kinds=all "
+            "--error-exitcode=42 "
+            "--track-origins=yes "
+            "--log-fd=2"
+        ),
+        help=(
+            "Custom valgrind options. Default adds full leak check, reports all leak kinds, "
+            "uses exit code 42 on errors/leaks, tracks origins, and logs to stderr."
+        ),
     )
     return parser.parse_args()
 
@@ -127,11 +154,43 @@ def is_sorted(stack: List[int]) -> bool:
     return all(stack[i] <= stack[i + 1] for i in range(len(stack) - 1))
 
 
-def run_case(binary: str, values: List[int]) -> Tuple[bool, str, int]:
+def parse_valgrind_report(stderr: str) -> Tuple[bool, str]:
+    err_match = re.search(r"ERROR SUMMARY: (\d+) errors", stderr)
+    if err_match and int(err_match.group(1)) > 0:
+        return False, f"valgrind error summary: {err_match.group(1)} errors"
+
+    def _bytes(label: str) -> int:
+        m = re.search(rf"{label}: *([0-9,]+) bytes", stderr)
+        return int(m.group(1).replace(",", "")) if m else 0
+
+    definitely = _bytes("definitely lost")
+    indirectly = _bytes("indirectly lost")
+    if definitely > 0 or indirectly > 0:
+        return False, (
+            f"valgrind leak: definitely lost {definitely} bytes, "
+            f"indirectly lost {indirectly} bytes"
+        )
+    return True, ""
+
+
+def run_case(binary: str, values: List[int], use_valgrind: bool, valgrind_opts: str) -> Tuple[bool, str, int]:
     cmd = [binary] + [str(v) for v in values]
+    if use_valgrind:
+        vg_args = shlex.split(valgrind_opts) if valgrind_opts else []
+        cmd = ["valgrind", *vg_args, *cmd]
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        return False, f"non-zero exit ({result.returncode}): {result.stderr.strip()}", 0
+        reason = f"non-zero exit ({result.returncode}): {result.stderr.strip()}"
+        if use_valgrind:
+            reason = f"valgrind reported error/leak ({result.returncode}): {result.stderr.strip()}"
+        return False, reason, 0
+
+    if use_valgrind:
+        clean, vg_reason = parse_valgrind_report(result.stderr)
+        if not clean:
+            return False, vg_reason, 0
+
     raw_stdout = result.stdout.strip()
     if raw_stdout == "Error":
         return False, "program printed Error", 0
@@ -159,6 +218,14 @@ def format_values(values: List[int]) -> str:
     return " ".join(str(v) for v in values)
 
 
+def colorize(text: str, color: str, enable: bool) -> str:
+    if not enable:
+        return text
+    colors = {"green": "\033[32m", "red": "\033[31m"}
+    reset = "\033[0m"
+    return f"{colors.get(color, '')}{text}{reset}"
+
+
 def main() -> int:
     args = parse_args()
     if args.seed is not None:
@@ -176,8 +243,19 @@ def main() -> int:
     for size in sizes:
         for _ in range(args.tests):
             values = random.sample(range(args.min_val, args.max_val + 1), size)
-            ok, reason, move_count = run_case(args.binary, values)
+            ok, reason, move_count = run_case(
+                args.binary,
+                values,
+                use_valgrind=args.valgrind,
+                valgrind_opts=args.valgrind_opts,
+            )
             total += 1
+            vals_str = format_values(values)
+            status = colorize("[OK]", "green", not args.no_color) if ok else colorize("[KO]", "red", not args.no_color)
+            line = f"[{vals_str}]{status}"
+            if not ok:
+                line += f" {reason}"
+            print(line)
             if not ok:
                 failures.append(
                     {
