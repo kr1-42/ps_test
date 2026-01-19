@@ -10,7 +10,7 @@ from typing import List, Tuple
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run randomized push_swap tests for small input sizes (2-5 numbers)."
+        description="Run randomized push_swap tests for various input sizes."
     )
     parser.add_argument(
         "--binary",
@@ -25,8 +25,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sizes",
-        default="2,3,4,5",
-        help="Comma-separated list of sizes to test (default: 2,3,4,5)",
+        default="2,3,4,5,100,500",
+        help="Comma-separated list of sizes to test (default: 2,3,4,5,100,500)",
     )
     parser.add_argument(
         "--min",
@@ -231,8 +231,8 @@ def main() -> int:
     if args.seed is not None:
         random.seed(args.seed)
     sizes = [int(s) for s in args.sizes.split(",") if s.strip()]
-    if any(s < 2 or s > 5 for s in sizes):
-        print("Only sizes 2 through 5 are supported", file=sys.stderr)
+    if any(s < 2 for s in sizes):
+        print("Only sizes >= 2 are supported", file=sys.stderr)
         return 1
     if args.max_val - args.min_val + 1 < max(sizes):
         print("Range too small for unique numbers of requested size", file=sys.stderr)
@@ -252,7 +252,7 @@ def main() -> int:
             total += 1
             vals_str = format_values(values)
             status = colorize("[OK]", "green", not args.no_color) if ok else colorize("[KO]", "red", not args.no_color)
-            line = f"[{vals_str}]{status}"
+            line = f"[{vals_str}]{status}[{move_count}_moves]"
             if not ok:
                 line += f" {reason}"
             print(line)
