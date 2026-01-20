@@ -7,6 +7,9 @@ import subprocess
 import sys
 from typing import List, Tuple
 
+INT_MIN = -2147483648
+INT_MAX = 2147483647
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -214,6 +217,20 @@ def run_case(binary: str, values: List[int], use_valgrind: bool, valgrind_opts: 
     return True, "", len(ops)
 
 
+def run_error_case(binary: str, args: List[str], use_valgrind: bool, valgrind_opts: str) -> Tuple[bool, str]:
+    cmd = [binary] + args
+    if use_valgrind:
+        vg_args = shlex.split(valgrind_opts) if valgrind_opts else []
+        cmd = ["valgrind", *vg_args, *cmd]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    if stdout == "Error" or stderr == "Error":
+        return True, ""
+    return False, f"expected Error, got stdout='{stdout}' stderr='{stderr}' exit={result.returncode}"
+
+
 def format_values(values: List[int]) -> str:
     return " ".join(str(v) for v in values)
 
@@ -282,18 +299,54 @@ def main() -> int:
         else:
             print(f"{size} args case failed ({stats['passed']}/{stats['total']})")
 
-    if failures:
+    error_cases = [
+        ("no args", []),
+        ("duplicate list", ["1", "2", "2"]),
+        ("non-integer list", ["12b3"]),
+        ("sign only plus", ["+"]),
+        ("sign only minus", ["-"]),
+        ("overflow max list", [str(INT_MAX + 1)]),
+        ("overflow min list", [str(INT_MIN - 1)]),
+        ("duplicate string", ["1 2 2"]),
+        ("non-integer string", ["1 2a"]),
+        ("overflow max string", [str(INT_MAX + 1)]),
+        ("overflow min string", [str(INT_MIN - 1)]),
+    ]
+    error_failures = []
+    print("\nParsing error checks:")
+    for label, case_args in error_cases:
+        ok, reason = run_error_case(
+            args.binary,
+            case_args,
+            use_valgrind=args.valgrind,
+            valgrind_opts=args.valgrind_opts,
+        )
+        status = colorize("[OK]", "green", not args.no_color) if ok else colorize("[KO]", "red", not args.no_color)
+        line = f"[{label}]{status}"
+        if not ok:
+            line += f" {reason}"
+            error_failures.append({"label": label, "reason": reason})
+        print(line)
+    print(
+        f"Parsing error checks passed: {len(error_cases) - len(error_failures)}/{len(error_cases)}"
+    )
+
+    if failures or error_failures:
         print("\nSample failing cases:")
         for fail in failures[: args.show_fail]:
             vals = format_values(fail["values"])
             print(
                 f"- size={fail['size']} values=[{vals}] moves={fail['moves']} reason={fail['reason']}"
             )
+        for err in error_failures[: args.show_fail]:
+            print(f"- parsing case={err['label']} reason={err['reason']}")
         print("\nRerun a specific case with:")
         if failures:
             example = failures[0]
             vals = format_values(example["values"])
             print(f"  {args.binary} {vals}")
+        elif error_failures:
+            print(f"  {args.binary}")
         return 1
 
     print("All cases passed")
