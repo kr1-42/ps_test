@@ -243,6 +243,11 @@ def colorize(text: str, color: str, enable: bool) -> str:
     return f"{colors.get(color, '')}{text}{reset}"
 
 
+def print_section(title: str) -> None:
+    line = "=" * max(10, len(title) + 4)
+    print(f"\n{line}\n  {title}\n{line}")
+
+
 def main() -> int:
     args = parse_args()
     if args.seed is not None:
@@ -287,17 +292,26 @@ def main() -> int:
                     }
                 )
 
+    print_section("Summary")
     print(f"Total tests: {total}")
     print(f"Failures: {len(failures)}")
-    print("\nPer-size summary:")
+    print("\nPer-size results:")
+    print(f"{'Size':>6}  {'Passed':>7}  {'Total':>5}  Status")
+    print("-" * 34)
     for size in sizes:
         stats = per_size[size]
         if stats["total"] == 0:
-            print(f"{size} args case skipped")
+            status_text = "skipped"
+            status = colorize(status_text, "red", not args.no_color)
+            print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
         elif stats["passed"] == stats["total"]:
-            print(f"{size} args case passed")
+            status_text = "passed"
+            status = colorize(status_text, "green", not args.no_color)
+            print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
         else:
-            print(f"{size} args case failed ({stats['passed']}/{stats['total']})")
+            status_text = "failed"
+            status = colorize(status_text, "red", not args.no_color)
+            print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
 
     error_cases = [
         ("no args", []),
@@ -313,7 +327,9 @@ def main() -> int:
         ("overflow min string", [str(INT_MIN - 1)]),
     ]
     error_failures = []
-    print("\nParsing error checks:")
+    print_section("Parsing error checks")
+    print(f"{'Case':<26}  Status")
+    print("-" * 34)
     for label, case_args in error_cases:
         ok, reason = run_error_case(
             args.binary,
@@ -321,18 +337,17 @@ def main() -> int:
             use_valgrind=args.valgrind,
             valgrind_opts=args.valgrind_opts,
         )
-        status = colorize("[OK]", "green", not args.no_color) if ok else colorize("[KO]", "red", not args.no_color)
-        line = f"[{label}]{status}"
+        status = colorize("OK", "green", not args.no_color) if ok else colorize("KO", "red", not args.no_color)
+        line = f"{label:<26}  {status}"
         if not ok:
             line += f" {reason}"
             error_failures.append({"label": label, "reason": reason})
         print(line)
-    print(
-        f"Parsing error checks passed: {len(error_cases) - len(error_failures)}/{len(error_cases)}"
-    )
+    print("-" * 34)
+    print(f"Passed: {len(error_cases) - len(error_failures)}/{len(error_cases)}")
 
     if failures or error_failures:
-        print("\nSample failing cases:")
+        print_section("Sample failing cases")
         for fail in failures[: args.show_fail]:
             vals = format_values(fail["values"])
             print(
@@ -340,7 +355,7 @@ def main() -> int:
             )
         for err in error_failures[: args.show_fail]:
             print(f"- parsing case={err['label']} reason={err['reason']}")
-        print("\nRerun a specific case with:")
+        print_section("Rerun a specific case")
         if failures:
             example = failures[0]
             vals = format_values(example["values"])
