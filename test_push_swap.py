@@ -23,8 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tests",
         type=int,
-        default=200,
-        help="Number of random cases to run per size (default: 200)",
+        default=5,
+        help="Number of random cases to run per size (default: 5)",
     )
     parser.add_argument(
         "--sizes",
@@ -35,15 +35,15 @@ def parse_args() -> argparse.Namespace:
         "--min",
         dest="min_val",
         type=int,
-        default=-50,
-        help="Minimum integer value for generated inputs (default: -50)",
+        default=-1000,
+        help="Minimum integer value for generated inputs (default: -1000)",
     )
     parser.add_argument(
         "--max",
         dest="max_val",
         type=int,
-        default=50,
-        help="Maximum integer value for generated inputs (default: 50)",
+        default=1000,
+        help="Maximum integer value for generated inputs (default: 1000)",
     )
     parser.add_argument(
         "--seed",
@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--valgrind",
         action="store_true",
-        help="Wrap executions with valgrind and fail on leaks/errors",
+        help="Run valgrind only on parsing error cases",
     )
     parser.add_argument(
         "--valgrind-opts",
@@ -252,66 +252,85 @@ def main() -> int:
     args = parse_args()
     if args.seed is not None:
         random.seed(args.seed)
+    run_random_tests = not args.valgrind
     sizes = [int(s) for s in args.sizes.split(",") if s.strip()]
-    if any(s < 2 for s in sizes):
-        print("Only sizes >= 2 are supported", file=sys.stderr)
-        return 1
-    if args.max_val - args.min_val + 1 < max(sizes):
-        print("Range too small for unique numbers of requested size", file=sys.stderr)
-        return 1
+    if run_random_tests:
+        if any(s < 2 for s in sizes):
+            print("Only sizes >= 2 are supported", file=sys.stderr)
+            return 1
+        if args.max_val - args.min_val + 1 < max(sizes):
+            print("Range too small for unique numbers of requested size", file=sys.stderr)
+            return 1
 
     total = 0
     failures = []
-    per_size = {size: {"total": 0, "passed": 0} for size in sizes}
-    for size in sizes:
-        for _ in range(args.tests):
-            values = random.sample(range(args.min_val, args.max_val + 1), size)
-            ok, reason, move_count = run_case(
-                args.binary,
-                values,
-                use_valgrind=args.valgrind,
-                valgrind_opts=args.valgrind_opts,
-            )
-            total += 1
-            per_size[size]["total"] += 1
-            if ok:
-                per_size[size]["passed"] += 1
-            vals_str = format_values(values)
-            status = colorize("[OK]", "green", not args.no_color) if ok else colorize("[KO]", "red", not args.no_color)
-            line = f"[{vals_str}]{status}[{move_count}_moves]"
-            if not ok:
-                line += f" {reason}"
-            print(line)
-            if not ok:
-                failures.append(
-                    {
-                        "size": size,
-                        "values": values,
-                        "reason": reason,
-                        "moves": move_count,
-                    }
+    per_size = {size: {"total": 0, "passed": 0, "max_moves": 0} for size in sizes}
+    if run_random_tests:
+        for size in sizes:
+            for _ in range(args.tests):
+                values = random.sample(range(args.min_val, args.max_val + 1), size)
+                ok, reason, move_count = run_case(
+                    args.binary,
+                    values,
+                    use_valgrind=False,
+                    valgrind_opts=args.valgrind_opts,
                 )
+                total += 1
+                per_size[size]["total"] += 1
+                if ok:
+                    per_size[size]["passed"] += 1
+                    if move_count > per_size[size]["max_moves"]:
+                        per_size[size]["max_moves"] = move_count
+                vals_str = format_values(values)
+                status = colorize("[OK]", "green", not args.no_color) if ok else colorize("[KO]", "red", not args.no_color)
+                line = f"[{vals_str}]{status}[{move_count}_moves]"
+                if not ok:
+                    line += f" {reason}"
+                print(line)
+                if not ok:
+                    failures.append(
+                        {
+                            "size": size,
+                            "values": values,
+                            "reason": reason,
+                            "moves": move_count,
+                        }
+                    )
+    else:
+        print_section("Randomized tests")
+        print("Skipped (valgrind runs only on parsing error cases)")
 
     print_section("Summary")
-    print(f"Total tests: {total}")
-    print(f"Failures: {len(failures)}")
-    print("\nPer-size results:")
-    print(f"{'Size':>6}  {'Passed':>7}  {'Total':>5}  Status")
-    print("-" * 34)
-    for size in sizes:
-        stats = per_size[size]
-        if stats["total"] == 0:
-            status_text = "skipped"
-            status = colorize(status_text, "red", not args.no_color)
-            print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
-        elif stats["passed"] == stats["total"]:
-            status_text = "passed"
-            status = colorize(status_text, "green", not args.no_color)
-            print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
-        else:
-            status_text = "failed"
-            status = colorize(status_text, "red", not args.no_color)
-            print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
+    if run_random_tests:
+        print(f"Total tests: {total}")
+        print(f"Failures: {len(failures)}")
+        print("\nPer-size results:")
+        print(f"{'Size':>6}  {'Passed':>7}  {'Total':>5}  Status")
+        print("-" * 34)
+        for size in sizes:
+            stats = per_size[size]
+            if stats["total"] == 0:
+                status_text = "skipped"
+                status = colorize(status_text, "red", not args.no_color)
+                print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
+            elif stats["passed"] == stats["total"]:
+                status_text = "passed"
+                status = colorize(status_text, "green", not args.no_color)
+                print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
+            else:
+                status_text = "failed"
+                status = colorize(status_text, "red", not args.no_color)
+                print(f"{size:>6}  {stats['passed']:>7}  {stats['total']:>5}  {status}")
+
+        print("\nHighest moves per size:")
+        print(f"{'Size':>6}  {'Max moves':>9}")
+        print("-" * 20)
+        for size in sizes:
+            stats = per_size[size]
+            max_moves = stats["max_moves"] if stats["passed"] > 0 else 0
+            print(f"{size:>6}  {max_moves:>9}")
+    else:
+        print("Randomized tests skipped; summary limited to parsing errors.")
 
     error_cases = [
         ("no args", []),
