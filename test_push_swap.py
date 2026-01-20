@@ -240,6 +240,7 @@ def main() -> int:
 
     total = 0
     failures = []
+    per_size = {size: {"total": 0, "passed": 0} for size in sizes}
     for size in sizes:
         for _ in range(args.tests):
             values = random.sample(range(args.min_val, args.max_val + 1), size)
@@ -250,6 +251,9 @@ def main() -> int:
                 valgrind_opts=args.valgrind_opts,
             )
             total += 1
+            per_size[size]["total"] += 1
+            if ok:
+                per_size[size]["passed"] += 1
             vals_str = format_values(values)
             status = colorize("[OK]", "green", not args.no_color) if ok else colorize("[KO]", "red", not args.no_color)
             line = f"[{vals_str}]{status}[{move_count}_moves]"
@@ -268,6 +272,15 @@ def main() -> int:
 
     print(f"Total tests: {total}")
     print(f"Failures: {len(failures)}")
+    print("\nPer-size summary:")
+    for size in sizes:
+        stats = per_size[size]
+        if stats["total"] == 0:
+            print(f"{size} args case skipped")
+        elif stats["passed"] == stats["total"]:
+            print(f"{size} args case passed")
+        else:
+            print(f"{size} args case failed ({stats['passed']}/{stats['total']})")
 
     if failures:
         print("\nSample failing cases:")
